@@ -19,7 +19,9 @@ $(ZIP):
 #cleaning
 clean:
 	@rm -rf modules/vendor/lib/modules/modules.{alias,dep,softdep,load}
+	@rm -rf vendor_ramdisk/lib/modules/modules.{alias,dep,softdep,load}
 	@rm -rf modules/vendor/lib/modules/*.ko
+	@rm -rf vendor_ramdisk/lib/modules/*.ko	
 	@rm -rf dtbo.img
 	@rm -rf *dtb*
 	@rm -rf Image
