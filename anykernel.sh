@@ -28,9 +28,9 @@ set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
 # begin passthrough patch
 passthrough() {
 if [ ! "$(getprop persist.sys.fuse.passthrough.enable)" ]; then
-	ui_print "Enabling fuse passthrough..."
-
-	# FUSE Passthrough
+	ui_print "Remounting /system as rw..."
+	$home/tools/busybox mount -o rw,remount /system
+	ui_print "Patching system's build prop for FUSE Passthrough..."
 	patch_prop /system/build.prop "persist.sys.fuse.passthrough.enable" "true"
 fi
 } # end passthrough patch
