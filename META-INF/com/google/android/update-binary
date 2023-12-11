@@ -420,10 +420,10 @@ do_modules() {
   if [ "$(file_getprop anykernel.sh do.systemless)" == 1 ]; then
     if [ ! -d /data/adb -o ! -d /data/data/android ]; then
       ui_print " " "Warning: No /data access for kernel helper systemless module!";
-      return 1;
+    else
+      ui_print " " "Creating kernel helper systemless module...";
+      cd $AKHOME/modules;
     fi;
-    cd $AKHOME/modules;
-    ui_print " " "Creating kernel helper systemless module...";
     if [ -d /data/adb/magisk -a -f $AKHOME/magisk_patched ] || [ -d /data/data/me.weishu.kernelsu -a -f $AKHOME/kernelsu_patched ]; then
       umask=$(umask);
       moddir=/data/adb/modules/ak3-helper;
@@ -475,52 +475,52 @@ do_modules() {
     fi;
   fi
 
-    cd $AKHOME/modules;
-    ui_print " " "Pushing modules...";
-    if [ -d /dev/block/mapper ]; then
-      for block in system vendor product; do
-        for slot in "" _a _b; do
-          blockdev --setrw /dev/block/mapper/$block$slot 2>/dev/null;
-        done;
+  cd $AKHOME/modules;
+  ui_print " " "Pushing modules...";
+  if [ -d /dev/block/mapper ]; then
+    for block in system vendor product; do
+      for slot in "" _a _b; do
+        blockdev --setrw /dev/block/mapper/$block$slot 2>/dev/null;
       done;
-    fi;
-    if [ ! -d /postinstall/tmp ]; then
-      for mount in /system /vendor /product; do
-        if is_mounted $mount; then
-          mount -o rw,remount -t auto $mount && echo "$mount (rw)" >&2;
-        fi;
-      done;
-    fi;
-    for module in $(find . -type f); do
-      modtarget=$POSTINSTALL$(echo $module | cut -c2-);
-      if [ ! -e $modtarget ]; then
-        case $module in
-          */vendor/*) modcon=vendor;;
-          */product/*) modcon=product;;
-          *) modcon=system;;
-        esac;
-      fi;
-      if is_mounted $modtarget; then
-        mount -o rw,remount -t auto $modtarget && echo "$modtarget (rw)" >&2;
-      fi;
-      mkdir -p $(dirname $modtarget);
-      cp -rLf $module $modtarget;
-      chown 0:0 $modtarget;
-      chmod 644 $modtarget;
-      if [ "$modcon" ]; then
-        /system/bin/chcon "u:object_r:${modcon}_file:s0" $modtarget;
-      fi;
-      if is_mounted $modtarget; then
-        mount -o ro,remount -t auto $modtarget && echo "$modtarget (ro)" >&2;
+    done;
+  fi;
+  if [ ! -d /postinstall/tmp ]; then
+    for mount in /system /vendor /product; do
+      if is_mounted $mount; then
+        mount -o rw,remount -t auto $mount && echo "$mount (rw)" >&2;
       fi;
     done;
-    if [ ! -d /postinstall/tmp ]; then
-      for mount in /system /vendor /product; do
-        if is_mounted $mount; then
-          mount -o ro,remount -t auto $mount && echo "$mount (ro)" >&2;
-        fi;
-      done;
+  fi;
+  for module in $(find . -type f); do
+    modtarget=$POSTINSTALL$(echo $module | cut -c2-);
+    if [ ! -e $modtarget ]; then
+      case $module in
+        */vendor/*) modcon=vendor;;
+        */product/*) modcon=product;;
+        *) modcon=system;;
+      esac;
     fi;
+    if is_mounted $modtarget; then
+      mount -o rw,remount -t auto $modtarget && echo "$modtarget (rw)" >&2;
+    fi;
+    mkdir -p $(dirname $modtarget);
+    cp -rLf $module $modtarget;
+    chown 0:0 $modtarget;
+    chmod 644 $modtarget;
+    if [ "$modcon" ]; then
+      /system/bin/chcon "u:object_r:${modcon}_file:s0" $modtarget;
+    fi;
+    if is_mounted $modtarget; then
+      mount -o ro,remount -t auto $modtarget && echo "$modtarget (ro)" >&2;
+    fi;
+  done;
+  if [ ! -d /postinstall/tmp ]; then
+    for mount in /system /vendor /product; do
+      if is_mounted $mount; then
+        mount -o ro,remount -t auto $mount && echo "$mount (ro)" >&2;
+      fi;
+    done;
+  fi;
 
   cd $AKHOME;
 }
