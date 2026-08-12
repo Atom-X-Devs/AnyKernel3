@@ -175,7 +175,7 @@ unpack_ramdisk() {
   cd $RAMDISK;
   EXTRACT_UNSAFE_SYMLINKS=1 cpio -d -F $SPLITIMG/ramdisk.cpio -i;
   if [ $? != 0 -o ! "$(ls)" ]; then
-    echo "Unpacking ramdisk failed.";
+    abort "Unpacking ramdisk failed. Aborting...";
   fi;
   if [ -d "$AKHOME/rdtmp" ]; then
     cp -af $AKHOME/rdtmp/* .;
@@ -232,7 +232,7 @@ repack_ramdisk() {
     fi;
   fi;
   if [ "$packfail" ]; then
-    echo "Repacking ramdisk failed.";
+    abort "Repacking ramdisk failed. Aborting...";
   fi;
 
   if [ -f "$BIN/mkmtkhdr" -a -f "$SPLITIMG/boot.img-base" ]; then
