@@ -10,6 +10,7 @@ BIN=$AKHOME/tools;
 PATCH=$AKHOME/patch;
 RAMDISK=$AKHOME/ramdisk;
 SPLITIMG=$AKHOME/split_img;
+VENDORRD=$AKHOME/vendor_ramdisk;
 
 ### output/testing functions:
 # ui_print "<text>" [...]
@@ -141,9 +142,51 @@ split_boot() {
   cd $AKHOME;
 }
 
-# unpack_ramdisk (extract ramdisk only)
+# unpack_vendorrd <name|path>
+unpack_vendorrd() {
+  local comp cpio vndrname;
+
+  cd $SPLITIMG;
+  if [ -f "$1" ]; then
+    cpio=$1;
+    vndrname=$(basename $cpio .cpio);
+  else
+    case $1 in
+      platform) vndrname=ramdisk;;
+      *) vndrname=$1;;
+    esac;
+    if [ -f "vendor_ramdisk/$vndrname.cpio" ]; then
+      cpio=vendor_ramdisk/$vndrname.cpio;
+    fi;
+  fi;
+
+  comp=$(magiskboot decompress $cpio 2>&1 | grep -v 'raw' | sed -n 's;.*\[\(.*\)\];\1;p');
+  if [ "$comp" ]; then
+    mv -f $cpio $cpio.$comp;
+    magiskboot decompress $cpio.$comp $cpio;
+    if [ $? != 0 ] && $comp --help 2>/dev/null; then
+      echo "Attempting $cpio unpack with busybox $comp..." >&2;
+      $comp -dc $cpio.$comp > $cpio;
+    fi;
+  fi;
+
+  mkdir -p $VENDORRD/$vndrname;
+  chmod 755 $VENDORRD/$vndrname;
+
+  cd $VENDORRD/$vndrname;
+  EXTRACT_UNSAFE_SYMLINKS=1 cpio -d -F $SPLITIMG/$cpio -i;
+  if [ $? != 0 -o ! "$(ls)" ]; then
+    abort "Unpacking vendor ramdisk \"$vndrname\" failed. Aborting...";
+  fi;
+  if [ -d "$AKHOME/vrdtmp/$vndrname" ]; then
+    cp -af $AKHOME/vrdtmp/$vndrname/* .;
+  fi;
+  cd $VENDORRD;
+}
+
+# unpack_ramdisk (extract all ramdisks only)
 unpack_ramdisk() {
-  local comp;
+  local comp cpio vndrname;
 
   cd $SPLITIMG;
   if [ -f ramdisk.cpio.gz ]; then
@@ -155,32 +198,39 @@ unpack_ramdisk() {
   fi;
 
   if [ -f ramdisk.cpio ]; then
+    [ -d $RAMDISK ] && mv -f $RAMDISK $AKHOME/rdtmp;
+
     comp=$(magiskboot decompress ramdisk.cpio 2>&1 | grep -v 'raw' | sed -n 's;.*\[\(.*\)\];\1;p');
+    if [ "$comp" ]; then
+      mv -f ramdisk.cpio ramdisk.cpio.$comp;
+      magiskboot decompress ramdisk.cpio.$comp ramdisk.cpio;
+      if [ $? != 0 ] && $comp --help 2>/dev/null; then
+        echo "Attempting ramdisk unpack with busybox $comp..." >&2;
+        $comp -dc ramdisk.cpio.$comp > ramdisk.cpio;
+      fi;
+    fi;
+
+    mkdir -p $RAMDISK;
+    chmod 755 $RAMDISK;
+
+    cd $RAMDISK;
+    EXTRACT_UNSAFE_SYMLINKS=1 cpio -d -F $SPLITIMG/ramdisk.cpio -i;
+    if [ $? != 0 -o ! "$(ls)" ]; then
+      abort "Unpacking ramdisk failed. Aborting...";
+    fi;
+    if [ -d "$AKHOME/rdtmp" ]; then
+      cp -af $AKHOME/rdtmp/* .;
+    fi;
+  elif [ -d vendor_ramdisk ]; then
+    [ -d $VENDORRD ] && mv -f $VENDORRD $AKHOME/vrdtmp;
+    for cpio in vendor_ramdisk/*.cpio; do
+      unpack_vendorrd $cpio;
+    done;
   else
     abort "No ramdisk found to unpack. Aborting...";
   fi;
-  if [ "$comp" ]; then
-    mv -f ramdisk.cpio ramdisk.cpio.$comp;
-    magiskboot decompress ramdisk.cpio.$comp ramdisk.cpio;
-    if [ $? != 0 ] && $comp --help 2>/dev/null; then
-      echo "Attempting ramdisk unpack with busybox $comp..." >&2;
-      $comp -dc ramdisk.cpio.$comp > ramdisk.cpio;
-    fi;
-  fi;
-
-  [ -d $RAMDISK ] && mv -f $RAMDISK $AKHOME/rdtmp;
-  mkdir -p $RAMDISK;
-  chmod 755 $RAMDISK;
-
-  cd $RAMDISK;
-  EXTRACT_UNSAFE_SYMLINKS=1 cpio -d -F $SPLITIMG/ramdisk.cpio -i;
-  if [ $? != 0 -o ! "$(ls)" ]; then
-    abort "Unpacking ramdisk failed. Aborting...";
-  fi;
-  if [ -d "$AKHOME/rdtmp" ]; then
-    cp -af $AKHOME/rdtmp/* .;
-  fi;
 }
+
 ### dump_boot (dump and split image, then extract ramdisk)
 dump_boot() {
   split_boot;
@@ -189,9 +239,9 @@ dump_boot() {
 ###
 
 ### write_boot functions:
-# repack_ramdisk (repack ramdisk only)
+# repack_ramdisk (repack all ramdisks only)
 repack_ramdisk() {
-  local comp packfail mtktype;
+  local comp packfail vndrname cpio mtktype;
 
   cd $AKHOME;
   if [ "$RAMDISK_COMPRESSION" != "auto" ] && [ "$(grep HEADER_VER $SPLITIMG/infotmp | sed -n 's;.*\[\(.*\)\];\1;p')" -gt 3 ]; then
@@ -199,7 +249,7 @@ repack_ramdisk() {
     RAMDISK_COMPRESSION=auto;
   fi;
   case $RAMDISK_COMPRESSION in
-    auto|"") comp=$(ls $SPLITIMG/ramdisk.cpio.* 2>/dev/null | grep -v 'mtk' | rev | cut -d. -f1 | rev);;
+    auto|"") comp=$(ls $SPLITIMG/ramdisk.cpio.* $SPLITIMG/vendor_ramdisk/ramdisk.cpio.* 2>/dev/null | tail -n1 | grep -v 'mtk' | rev | cut -d. -f1 | rev);;
     none|cpio) comp="";;
     gz) comp=gzip;;
     lzo) comp=lzop;;
@@ -208,28 +258,45 @@ repack_ramdisk() {
     *) comp=$RAMDISK_COMPRESSION;;
   esac;
 
-  if [ -f "$BIN/mkbootfs" ]; then
-    mkbootfs $RAMDISK > ramdisk-new.cpio;
-  else
-    cd $RAMDISK;
-    find . | cpio -H newc -o > $AKHOME/ramdisk-new.cpio;
+  if [ -f $SPLITIMG/ramdisk.cpio ]; then
+    if [ -f "$BIN/mkbootfs" ]; then
+      mkbootfs $RAMDISK > ramdisk-new.cpio;
+    else
+      cd $RAMDISK;
+      find . | cpio -H newc -o > $AKHOME/ramdisk-new.cpio;
+    fi;
+    [ $? != 0 ] && packfail=1;
+  elif [ -d $SPLITIMG/vendor_ramdisk ]; then
+    cd $VENDORRD;
+    for vndrname in *; do
+      if [ -d "$VENDORRD/$vndrname" ]; then
+        if [ -f "$BIN/mkbootfs" ]; then
+          mkbootfs $vndrname > $AKHOME/$vndrname-new.cpio;
+        else
+          cd $VENDORRD/$vndrname;
+          find . | cpio -H newc -o > $AKHOME/$vndrname-new.cpio;
+        fi;
+        [ $? != 0 ] && packfail=1;
+      fi;
+    done;
   fi;
-  [ $? != 0 ] && packfail=1;
 
   cd $AKHOME;
   if [ ! "$NO_MAGISK_CHECK" ]; then
     magiskboot cpio ramdisk-new.cpio test;
     magisk_patched=$?;
   fi;
-  [ "$magisk_patched" -eq 1 ] && magiskboot cpio ramdisk-new.cpio "extract .backup/.magisk $SPLITIMG/.magisk";
+  [ "$magisk_patched" == 1 ] && magiskboot cpio ramdisk-new.cpio "extract .backup/.magisk $SPLITIMG/.magisk";
   if [ "$comp" ]; then
-    magiskboot compress=$comp ramdisk-new.cpio;
-    if [ $? != 0 ] && $comp --help 2>/dev/null; then
-      echo "Attempting ramdisk repack with busybox $comp..." >&2;
-      $comp -9c ramdisk-new.cpio > ramdisk-new.cpio.$comp;
-      [ $? != 0 ] && packfail=1;
-      rm -f ramdisk-new.cpio;
-    fi;
+    for cpio in *-new.cpio; do
+      magiskboot compress=$comp $cpio;
+      if [ $? != 0 ] && $comp --help 2>/dev/null; then
+        echo "Attempting $cpio repack with busybox $comp..." >&2;
+        $comp -9c $cpio > $cpio.$comp;
+        [ $? != 0 ] && packfail=1;
+        rm -f $cpio;
+      fi;
+    done;
   fi;
   if [ "$packfail" ]; then
     abort "Repacking ramdisk failed. Aborting...";
@@ -245,12 +312,12 @@ repack_ramdisk() {
 
 # flash_boot (build, sign and write image only)
 flash_boot() {
-  local varlist i kernel ramdisk fdt cmdline comp part0 part1 needskernelpatch nocompflag signfail pk8 cert avbtype;
+  local varlist i kernel ramdisk fdt cmdline comp part0 part1 vndrname needskernelpatch nocompflag signfail pk8 cert avbtype;
 
   cd $SPLITIMG;
   if [ -f "$BIN/mkimage" ]; then
     varlist="name arch os type comp addr ep";
-  elif [ -f "$BIN/mk" -a -f "$BIN/unpackelf" -a -f boot.img-base ]; then
+  elif [ -f "$BIN/mkbootimg" -a -f "$BIN/unpackelf" -a -f boot.img-base ]; then
     mv -f cmdline.txt boot.img-cmdline 2>/dev/null;
     varlist="cmdline base pagesize kernel_offset ramdisk_offset tags_offset";
   fi;
@@ -316,6 +383,12 @@ flash_boot() {
   else
     [ "$kernel" ] && cp -f $kernel kernel;
     [ "$ramdisk" ] && cp -f $ramdisk ramdisk.cpio;
+    if [ -d vendor_ramdisk ]; then
+      for i in vendor_ramdisk/*.cpio; do
+        vndrname=$(basename $i .cpio);
+        cp -f $AKHOME/$vndrname-new.cpio vendor_ramdisk/$vndrname.cpio;
+      done;
+    fi;
     [ "$dt" -a -f extra ] && cp -f $dt extra;
     for i in dtb recovery_dtbo; do
       [ "$(eval echo \$$i)" -a -f $i ] && cp -f $(eval echo \$$i) $i;
@@ -326,7 +399,7 @@ flash_boot() {
           magiskboot cpio ramdisk.cpio test;
           magisk_patched=$?;
         fi;
-        if [ "$magisk_patched" -eq 1 ]; then
+        if [ "$magisk_patched" == 1 ]; then
           ui_print " " "Magisk detected! Patching kernel so reflashing Magisk is not necessary...";
           comp=$(magiskboot decompress kernel 2>&1 | grep -vE 'raw|zimage' | sed -n 's;.*\[\(.*\)\];\1;p');
           (magiskboot split $kernel || magiskboot decompress $kernel kernel) >&2;
@@ -387,7 +460,7 @@ flash_boot() {
             *-dtb) rm -f kernel_dtb;;
           esac;
         fi;
-        unset magisk_patched KEEPVERITY KEEPFORCEENCRYPT RECOVERYMODE PREINITDEVICE SHA1 RANDOMSEED; # leave PATCHVBMETAFLAG set for repack
+        unset magisk_patched KEEPVERITY KEEPFORCEENCRYPT RECOVERYMODE VENDORBOOT PREINITDEVICE SHA1 RANDOMSEED; # leave PATCHVBMETAFLAG set for repack
       ;;
     esac;
     case $RAMDISK_COMPRESSION in
@@ -564,15 +637,10 @@ flash_generic() {
   fi;
 }
 
-# flash_dtbo (backwards compatibility for flash_generic)
-flash_dtbo() { flash_generic dtbo; }
-
-### write_boot (repack ramdisk then build, sign and write image, vendor_dlkm and dtbo)
+### write_boot (repack ramdisk then build, sign and write image, vendor_dlkm, system_dlkm and dtbo)
 write_boot() {
   [ -d "$ramdisk" ] && repack_ramdisk;
   flash_boot;
-  flash_generic vendor_boot; # temporary until hdr v4 can be unpacked/repacked fully by magiskboot
-  flash_generic vendor_kernel_boot; # temporary until hdr v4 can be unpacked/repacked fully by magiskboot
   flash_generic vendor_dlkm;
   flash_generic system_dlkm;
   flash_generic dtbo;
@@ -713,7 +781,7 @@ replace_file() {
   chmod $2 $1;
 }
 
-# patch_fstab <fstab file> <mount match name> <fs match type> block|mount|fstype|options|flags <original string> <replacement string>
+# patch_fstab <fstab file> <mount match name> <fs match type> <block|mount|fstype|options|flags> <original string> <replacement string>
 patch_fstab() {
   local entry part newpart newentry;
   entry=$(grep "$2[[:space:]]" $1 | grep "$3");
@@ -785,10 +853,6 @@ patch_ueventd() {
 reset_ak() {
   local current i;
 
-  # Backwards compatibility for old API
-  [ "$no_block_display" ] && NO_BLOCK_DISPLAY="$no_block_display";
-  unset no_block_display;
-
   current=$(dirname $AKHOME/*-files/current);
   if [ -d "$current" ]; then
     for i in $BOOTIMG $AKHOME/boot-new.img; do
@@ -798,13 +862,14 @@ reset_ak() {
       [ -f $i ] && rm -f $AKHOME/$(basename $i);
     done;
   fi;
-  [ -d $SPLITIMG ] && rm -rf $RAMDISK;
+  [ -d $SPLITIMG ] && rm -rf $RAMDISK $VENDORRD;
   rm -rf $BOOTIMG $SPLITIMG $AKHOME/*-new* $AKHOME/*-files/current;
 
   if [ "$1" == "keep" ]; then
     [ -d $AKHOME/rdtmp ] && mv -f $AKHOME/rdtmp $RAMDISK;
+    [ -d $AKHOME/vrdtmp ] && mv -f $AKHOME/vrdtmp $VENDORRD;
   else
-    rm -rf $PATCH $AKHOME/rdtmp;
+    rm -rf $PATCH $AKHOME/rdtmp $AKHOME/vrdtmp;
   fi;
   if [ ! "$NO_BLOCK_DISPLAY" ]; then
     ui_print " ";
@@ -815,17 +880,6 @@ reset_ak() {
 # setup_ak
 setup_ak() {
   local blockfiles plistboot plistinit plistreco parttype name part mtdmount mtdpart mtdname target;
-
-  # Backwards compatibility for old API
-  [ "$block" ] && BLOCK="$block";
-  [ "$is_slot_device" ] && IS_SLOT_DEVICE="$is_slot_device";
-  [ "$ramdisk_compression" ] && RAMDISK_COMPRESSION="$ramdisk_compression";
-  [ "$patch_vbmeta_flag" ] && PATCH_VBMETA_FLAG="$patch_vbmeta_flag";
-  [ "$customdd" ] && CUSTOMDD="$customdd";
-  [ "$slot_select" ] && SLOT_SELECT="$slot_select";
-  [ "$no_block_display" ] && NO_BLOCK_DISPLAY="$no_block_display";
-  [ "$no_magisk_check" ] && NO_MAGISK_CHECK="$no_magisk_check";
-  unset block is_slot_device ramdisk_compression patch_vbmeta_flag customdd slot_select no_block_display no_magisk_check;
 
   # slot detection enabled by IS_SLOT_DEVICE=1 or auto (from anykernel.sh)
   case $IS_SLOT_DEVICE in
@@ -862,7 +916,7 @@ setup_ak() {
   rm -f modules/system/lib/modules/placeholder patch/placeholder ramdisk/placeholder;
   rmdir -p modules patch ramdisk 2>/dev/null;
 
-  # automate simple multi-partition setup for hdr_v4 boot + init_boot + vendor_kernel_boot (for dtb only until magiskboot supports hdr v4 vendor_ramdisk unpack/repack)
+  # automate simple multi-partition setup for hdr_v4 boot + init_boot + vendor_kernel_boot
   if [ -e "/dev/block/bootdevice/by-name/init_boot$SLOT" -a -e "/dev/block/bootdevice/by-name/vendor_kernel_boot$SLOT" -a ! -f init_v4_setup ] && [ -f dtb -o -d vendor_ramdisk -o -d vendor_patch ]; then
     echo "Setting up for simple automatic init_boot flashing..." >&2;
     (mkdir boot-files;
@@ -871,17 +925,17 @@ setup_ak() {
     mv -f ramdisk patch init_boot-files;
     mkdir vendor_kernel_boot-files;
     mv -f dtb vendor_kernel_boot-files;
-    mv -f vendor_ramdisk vendor_kernel_boot-files/ramdisk;
+    mv -f vendor_ramdisk vendor_kernel_boot-files/vendor_ramdisk;
     mv -f vendor_patch vendor_kernel_boot-files/patch) 2>/dev/null;
     touch init_v4_setup;
-  # automate simple multi-partition setup for hdr_v3+ boot + vendor_boot with dtb/dlkm (for v3 only until magiskboot supports hdr v4 vendor_ramdisk unpack/repack)
+  # automate simple multi-partition setup for hdr_v3+ boot + vendor_boot with dtb/dlkm
   elif [ -e "/dev/block/bootdevice/by-name/vendor_boot$SLOT" -a ! -f vendor_v3_setup ] && [ -f dtb -o -d vendor_ramdisk -o -d vendor_patch ]; then
     echo "Setting up for simple automatic vendor_boot flashing..." >&2;
     (mkdir boot-files;
     mv -f Image* ramdisk patch boot-files;
     mkdir vendor_boot-files;
     mv -f dtb vendor_boot-files;
-    mv -f vendor_ramdisk vendor_boot-files/ramdisk;
+    mv -f vendor_ramdisk vendor_boot-files/vendor_ramdisk;
     mv -f vendor_patch vendor_boot-files/patch) 2>/dev/null;
     touch vendor_v3_setup;
   fi;
@@ -956,7 +1010,6 @@ setup_ak() {
   fi;
 
   # run attributes function for current block if it exists
-  type attributes >/dev/null 2>&1 && attributes; # backwards compatibility
   type ${name}_attributes >/dev/null 2>&1 && ${name}_attributes;
 }
 ###
